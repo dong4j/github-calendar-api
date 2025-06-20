@@ -6,6 +6,8 @@ import logging
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
+import threading
+import time
 
 # 配置日志
 logging.basicConfig(
@@ -120,12 +122,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+        elif self.path.startswith("/cache"):
+            try:
+                if not os.path.exists(CACHE_FILE):
+                    raise FileNotFoundError("Cache file not found")
+
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode('utf-8'))
+                logging.info("Successfully returned cached data")
+            except Exception as e:
+                logging.error(f"Error reading cache: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
         else:
             logging.warning(f"Received invalid request: {self.path}")
             self.send_response(404)
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             self.wfile.write(b"404 Not Found")
+
+def refresh_cache_periodically(user, interval_minutes):
+    while True:
+        try:
+            logging.info(f"[Scheduler] Refreshing cache for user: {user}")
+            getdata(user, cache_expiration_days)
+            logging.info(f"[Scheduler] Cache refreshed successfully")
+        except Exception as e:
+            logging.error(f"[Scheduler] Failed to refresh cache: {e}")
+        time.sleep(interval_minutes * 60)
 
 # 启动 HTTP 服务
 if __name__ == "__main__":
@@ -142,6 +173,16 @@ if __name__ == "__main__":
     port = args.port
     cache_expiration_days = args.cache
     logging.info(f"Starting server on port {port}...")
+
+    # 启动后台线程，每 10分 钟刷新一次缓存
+    default_user = "dong4j"  # 替换为你默认想定时刷新的用户名
+    refresh_thread = threading.Thread(
+        target=refresh_cache_periodically,
+        args=(default_user, 10),
+        daemon=True
+    )
+    refresh_thread.start()
+
     try:
         server = HTTPServer(("0.0.0.0", port), RequestHandler)
         logging.info(f"Server is running at http://0.0.0.0:{port}")
